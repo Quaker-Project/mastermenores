@@ -5,7 +5,7 @@ import pandas as pd
 
 # CONFIGURACIÓN
 EMAIL = "diego.maldonado@uma.es"
-PASSWORD = "ibxr uxiw unnl zmfm"
+PASSWORD = ""
 
 # Emails por defecto (fallback)
 DESTINATARIOS_DEFAULT = [
