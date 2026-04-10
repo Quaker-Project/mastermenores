@@ -1,81 +1,85 @@
-import smtplib
-from email.mime.text import MIMEText
-from datetime import datetime, timedelta
+import streamlit as st
+import sqlite3
 import pandas as pd
+from bot import enviar_recordatorios
 
-EMAIL = "tu_email@gmail.com"
-PASSWORD = "TU_APP_PASSWORD"
-DESTINATARIOS = ["email1@gmail.com", "email2@gmail.com"]
+# DB
+conn = sqlite3.connect("database.db", check_same_thread=False)
+c = conn.cursor()
 
-def enviar_email(asunto, mensaje):
-    msg = MIMEText(mensaje)
-    msg["Subject"] = asunto
-    msg["From"] = EMAIL
-    msg["To"] = ", ".join(DESTINATARIOS)
+c.execute('''CREATE TABLE IF NOT EXISTS tareas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tarea TEXT,
+    fecha TEXT,
+    hora TEXT,
+    tipo TEXT,
+    prioridad TEXT,
+    aviso_dias INTEGER,
+    aviso_horas INTEGER,
+    aviso_mismo_dia TEXT,
+    responsable TEXT,
+    estado TEXT,
+    ultimo_aviso TEXT
+)''')
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL, PASSWORD)
-        server.send_message(msg)
+conn.commit()
 
-def enviar_recordatorios(conn):
-    df = pd.read_sql("SELECT * FROM tareas", conn)
-    ahora = datetime.now()
+st.title("📅 Agenda Máster")
 
-    for _, row in df.iterrows():
+# FORMULARIO
+with st.form("form"):
+    tarea = st.text_input("Tarea")
+    fecha = st.date_input("Fecha")
+    hora = st.time_input("Hora")
+    tipo = st.selectbox("Tipo", ["deadline","reunión"])
+    prioridad = st.selectbox("Prioridad", ["alta","media","baja"])
+    aviso_dias = st.number_input("Aviso días antes", 0, 30, 1)
+    aviso_horas = st.number_input("Aviso horas antes", 0, 48, 2)
+    aviso_mismo_dia = st.selectbox("Aviso mismo día", ["sí","no"])
+    responsable = st.text_input("Responsable (email o nombre)")
 
-        if row["estado"] != "pendiente":
-            continue
+    if st.form_submit_button("Añadir tarea"):
+        c.execute("""
+        INSERT INTO tareas 
+        (tarea, fecha, hora, tipo, prioridad, aviso_dias, aviso_horas, aviso_mismo_dia, responsable, estado, ultimo_aviso)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            tarea,
+            str(fecha),
+            str(hora),
+            tipo,
+            prioridad,
+            aviso_dias,
+            aviso_horas,
+            aviso_mismo_dia,
+            responsable,
+            "pendiente",
+            ""
+        ))
+        conn.commit()
+        st.success("Tarea añadida")
 
-        fecha_evento = datetime.strptime(
-            row["fecha"] + " " + row["hora"],
-            "%Y-%m-%d %H:%M:%S"
-        )
+# TABLA
+df = pd.read_sql("SELECT * FROM tareas", conn)
 
-        ultimo_aviso = row["ultimo_aviso"]
+st.subheader("📋 Tareas")
 
-        # PRIORIDAD
-        emoji = "🔵"
-        if row["prioridad"] == "alta":
-            emoji = "🔴"
-        elif row["prioridad"] == "media":
-            emoji = "🟠"
+filtro = st.selectbox("Filtrar estado", ["todas","pendiente","hecho"])
 
-        mensaje = f"""
-{emoji} {row['tarea']}
-Fecha: {fecha_evento.strftime('%d/%m %H:%M')}
-Responsable: {row['responsable']}
-Tipo: {row['tipo']}
-        """
+if filtro != "todas":
+    df = df[df["estado"] == filtro]
 
-        enviar = False
-        tipo_aviso = ""
+st.dataframe(df)
 
-        # AVISO DÍAS
-        if ahora >= fecha_evento - timedelta(days=row["aviso_dias"]) and ahora < fecha_evento:
-            tipo_aviso = "Aviso previo"
-            enviar = True
+# MARCAR HECHO
+id_done = st.number_input("ID tarea completada", 0, 10000, 0)
 
-        # AVISO HORAS
-        if ahora >= fecha_evento - timedelta(hours=row["aviso_horas"]) and ahora < fecha_evento:
-            tipo_aviso = "Aviso cercano"
-            enviar = True
+if st.button("Marcar como hecho"):
+    c.execute("UPDATE tareas SET estado='hecho' WHERE id=?", (id_done,))
+    conn.commit()
+    st.success("Actualizado")
 
-        # MISMO DÍA
-        if ahora.date() == fecha_evento.date() and row["aviso_mismo_dia"] == "sí":
-            tipo_aviso = "HOY"
-            enviar = True
-
-        # EVITAR DUPLICADOS
-        clave_aviso = f"{tipo_aviso}_{fecha_evento}"
-
-        if enviar and clave_aviso != ultimo_aviso:
-
-            asunto = f"[AGENDA] {tipo_aviso} - {row['tarea']}"
-
-            enviar_email(asunto, mensaje)
-
-            conn.execute(
-                "UPDATE tareas SET ultimo_aviso=? WHERE id=?",
-                (clave_aviso, row["id"])
-            )
-            conn.commit()
+# BOTÓN RECORDATORIOS
+if st.button("🔔 Enviar recordatorios"):
+    enviar_recordatorios(conn)
+    st.success("Recordatorios enviados")
